@@ -1,0 +1,3 @@
+iot_credential_endpoint = "c3v9qpts8gxznh.credentials.iot.ap-southeast-1.amazonaws.com"
+iot_data_endpoint = "a19iwwhi2w6u01-ats.iot.ap-southeast-1.amazonaws.com"
+s3_bucket_name = "minipc-iot-simulation-255945442255"
