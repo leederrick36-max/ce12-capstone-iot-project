@@ -2,7 +2,7 @@ This documentation provides a comprehensive, component-by-component architectura
 
 The configuration establishes a **Secure Fleet Provisioning Pipeline** and a **Real-Time Telemetry & Video Processing Engine** utilizing AWS IoT Core, AWS Kinesis Video Streams *, and Amazon S3.
 
---* KVS is not used currently. The IOT device will upload the video clips to S3 directly. See README.md(last section) CE12G3-IOT Repo . There is not AWS SDK available currently and unofficial third party libs has to be used instead.
+--* KVS is not used currently. The IOT device will upload the video clips to S3 directly. See README.md(last section) Iot branch . There is no Python AWS SDK available currently and unofficial third party libs have to be used instead, which made it complicated
 
 ### Architectural Workflow Overview
 
