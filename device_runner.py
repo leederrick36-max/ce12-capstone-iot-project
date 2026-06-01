@@ -36,7 +36,7 @@ PERM_CERT = "perm.cert.pem"
 PERM_KEY = "perm.private.key"
 
 # Video Container Mapping Configuration
-CHOSEN_FORMAT = "MKV"  # Options: "MP4" | "MKV" | "AVI"
+CHOSEN_FORMAT = "MP4"  # Options: "MP4" | "MKV" | "AVI"
 if CHOSEN_FORMAT == "MP4":
     FILE_EXTENSION = ".mp4"
     FOURCC_CODEC = cv2.VideoWriter_fourcc(*'mp4v')
@@ -176,7 +176,7 @@ def telemetry_thread_worker():
                 payload = {
                     "sensor_id": i,
                     "timestamp": int(time.time()),
-                    "temp": round(random.uniform(22.0, 30.0), 2),
+                    "temperature": round(random.uniform(22.0, 30.0), 2),
                     "status": "online"
                 }
                 print(f"[SEND] {topic} -> data: {payload}")
