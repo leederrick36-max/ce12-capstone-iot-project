@@ -1,1 +1,1 @@
-# ce12-capstone-iot-project
+# ce12-capstone-iot-project (visual only)
