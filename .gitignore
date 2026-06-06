@@ -216,3 +216,27 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Python / Conda / virtual environments
+miniconda3/
+Miniconda3-latest-Linux-x86_64.sh
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc
+
+# Node
+node_modules/
+
+# System/editor
+.vscode/
+.DS_Store
+
+# Large/archive files
+*.zip
+*.tar
+*.tar.gz
+*.7z
+*.rar
+*.iso20260514
