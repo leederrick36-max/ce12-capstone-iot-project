@@ -17,8 +17,14 @@ terraform {
       source  = "hashicorp/awscc"
       version = "~> 1.0"
     }
+
+    grafana = {
+      source  = "grafana/grafana"
+      version = ">= 2.9.0"
+    }
   }
 }
+
 
 
 # Configure the AWS CC Provider to use your region
@@ -30,4 +36,9 @@ provider "awscc" {
 provider "aws" {
   region = "ap-southeast-1"
 
+}
+
+provider "grafana" {
+  url  = "https://maroonfinch14.grafana.net"
+  auth = var.grafana_api_token
 }
