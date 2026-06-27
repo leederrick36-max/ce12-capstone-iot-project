@@ -6,8 +6,10 @@ import random
 import threading
 import cv2
 import boto3
+import platform
 from awscrt import mqtt
 from awsiot import mqtt_connection_builder
+
 
 # ==============================================================================
 # --- 1. GLOBAL INTEGRATED CONFIGURATION ---------------------------------------
@@ -205,14 +207,21 @@ def video_thread_worker():
     print(f"[VIDEO] Initializing S3 Client Engine for region: {AWS_REGION}...")
     s3_client = boto3.client('s3', region_name=AWS_REGION)
     
-    print(f"[VIDEO] Powering on webcam hardware at Index [{TARGET_INDEX}] via DirectShow...")
+print(f"[VIDEO] Powering on webcam hardware at Index [{TARGET_INDEX}]...")
+
+if platform.system() == "Windows":
     cap = cv2.VideoCapture(TARGET_INDEX, cv2.CAP_DSHOW)
     if not cap.isOpened():
         cap = cv2.VideoCapture(-1, cv2.CAP_DSHOW)
+else:
+    cap = cv2.VideoCapture(TARGET_INDEX)
     if not cap.isOpened():
-        print("❌ [VIDEO CRITICAL] Windows OS blocked hardware camera access.")
-        system_running = False
-        return
+        cap = cv2.VideoCapture(0)
+
+if not cap.isOpened():
+    print("❌ [VIDEO CRITICAL] OS blocked hardware camera access.")
+    system_running = False
+
 
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
