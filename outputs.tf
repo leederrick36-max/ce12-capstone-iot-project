@@ -12,3 +12,8 @@ output "grafana_role_arn" {
   description = "The ARN of the IAM role used by Grafana Cloud"
   value       = aws_iam_role.grafana_role.arn
 }
+
+output "github_actions_role_arn" {
+  description = "After the first local apply, copy this into the AWS_OIDC_ROLE_ARN GitHub repo secret. See CI_CD_SETUP.md."
+  value       = aws_iam_role.github_actions.arn
+}

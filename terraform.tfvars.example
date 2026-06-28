@@ -1,0 +1,20 @@
+# Copy this file to terraform.tfvars and fill in real values.
+# terraform.tfvars is already in .gitignore - never commit it (it will
+# contain real account IDs and a live Grafana API token).
+
+# Your AWS account ID (12 digits). Find it via:
+#   aws sts get-caller-identity --query Account --output text
+aws_account_id = "123456789012"
+
+# Grafana Cloud org/account ID used as the sts:ExternalId condition on
+# GrafanaIntegrationRole (grafana_monitoring.tf). Find it in Grafana Cloud
+# under your stack's AWS CloudWatch/SiteWise data source setup page, or
+# Administration > Cloud Portal > org settings.
+grafana_cloud_account_id = "000000"
+
+# Grafana Cloud API token (Admin scope) used by the `grafana` provider to
+# create data sources. Generate one under Administration > Users and access
+# > Service accounts in your Grafana Cloud stack. Treat like a password -
+# don't paste it into Slack/chat; share via a password manager or the team's
+# secrets channel.
+grafana_api_token = "glsa_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"

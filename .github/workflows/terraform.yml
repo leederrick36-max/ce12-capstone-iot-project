@@ -1,0 +1,100 @@
+name: Terraform CI/CD
+
+on:
+  pull_request:
+    paths:
+      - "**.tf"
+      - "index.py"
+      - ".github/workflows/terraform.yml"
+  workflow_dispatch: {}
+
+permissions:
+  id-token: write      # required for OIDC -> AWS role assumption
+  contents: read
+  pull-requests: write # required to comment the plan onto the PR
+
+jobs:
+  # Runs automatically on every PR that touches .tf files or the Lambda
+  # source. Posts the plan as a PR comment so the team can review it before
+  # merging - never applies anything.
+  plan:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rebuild lambda_function.zip from index.py
+        run: |
+          rm -f lambda_function.zip
+          zip -j lambda_function.zip index.py
+
+      - name: Configure AWS credentials (OIDC, no stored keys)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_OIDC_ROLE_ARN }}
+          aws-region: ap-southeast-1
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: terraform fmt check
+        run: terraform fmt -check -recursive
+
+      - name: terraform init
+        run: terraform init
+
+      - name: terraform plan
+        run: |
+          terraform plan -no-color -out=tfplan
+          terraform show -no-color tfplan > plan.txt
+        env:
+          TF_VAR_aws_account_id: ${{ secrets.AWS_ACCOUNT_ID }}
+          TF_VAR_grafana_cloud_account_id: ${{ secrets.GRAFANA_CLOUD_ACCOUNT_ID }}
+          TF_VAR_grafana_api_token: ${{ secrets.GRAFANA_API_TOKEN }}
+
+      - name: Comment plan on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const plan = fs.readFileSync('plan.txt', 'utf8').slice(0, 60000);
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `### Terraform Plan\n<details><summary>Show plan</summary>\n\n\`\`\`\n${plan}\n\`\`\`\n\n</details>`
+            });
+
+  # Manual only - go to the Actions tab and click "Run workflow". Gated by
+  # the "infra-apply" GitHub Environment, which requires a reviewer to
+  # approve the run before this job is allowed to start. That approval step
+  # is the "manual apply" gate - set the Environment's required reviewers in
+  # repo Settings, not here. See CI_CD_SETUP.md.
+  apply:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    environment: infra-apply
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rebuild lambda_function.zip from index.py
+        run: |
+          rm -f lambda_function.zip
+          zip -j lambda_function.zip index.py
+
+      - name: Configure AWS credentials (OIDC, no stored keys)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_OIDC_ROLE_ARN }}
+          aws-region: ap-southeast-1
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: terraform init
+        run: terraform init
+
+      - name: terraform apply
+        run: terraform apply -auto-approve
+        env:
+          TF_VAR_aws_account_id: ${{ secrets.AWS_ACCOUNT_ID }}
+          TF_VAR_grafana_cloud_account_id: ${{ secrets.GRAFANA_CLOUD_ACCOUNT_ID }}
+          TF_VAR_grafana_api_token: ${{ secrets.GRAFANA_API_TOKEN }}

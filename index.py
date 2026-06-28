@@ -84,8 +84,26 @@ def lambda_handler(event, context):
         # =========================================================================
         if any(lower_key.endswith(ext) for ext in ['.mp4', '.avi', '.mov', '.mkv', '.webm']):
             resolved_asset_id, _, video_prop_id = get_infrastructure_properties(sensor_id=None)
-            video_url = f"https://{bucket_name}.s3.ap-southeast-1.amazonaws.com/{file_key}"
-            
+
+            # Presigned GET url instead of a plain (unsigned) S3 link. The bucket is
+            # private (BucketOwnerEnforced + default Block Public Access), so a bare
+            # https://bucket.s3.../key URL 403s for anyone without their own AWS
+            # credentials. NOTE: this signs with the Lambda's own execution-role
+            # (temporary/STS) credentials, so AWS caps the URL's real validity at
+            # ~1 hour no matter what ExpiresIn says - that's fine here since a new
+            # clip (and a fresh URL) overwrites LatestVideoClipUrl every chunk
+            # interval, well under an hour. No IAM change needed: pipeline_role
+            # already has s3:GetObject on the whole bucket (sitewise.tf).
+            try:
+                video_url = s3_client.generate_presigned_url(
+                    'get_object',
+                    Params={'Bucket': bucket_name, 'Key': file_key},
+                    ExpiresIn=3600,
+                )
+            except Exception as e:
+                print(f"[ERROR] Failed generating presigned URL for {file_key}: {str(e)}")
+                continue
+
             if video_prop_id and resolved_asset_id:
                 try:
                     sitewise_client.batch_put_asset_property_value(entries=[{

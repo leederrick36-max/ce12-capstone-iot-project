@@ -12,9 +12,9 @@ resource "aws_iam_role" "grafana_role" {
       # Using the variables here
       Principal = { AWS = "arn:aws:iam::008923505280:root" }
       Action    = "sts:AssumeRole"
-      "Condition": {
-        "StringEquals": {
-          "sts:ExternalId": var.grafana_cloud_account_id
+      Condition = {
+        StringEquals = {
+          "sts:ExternalId" = var.grafana_cloud_account_id
         }
       }
     }]
