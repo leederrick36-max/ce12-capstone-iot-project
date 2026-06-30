@@ -1,0 +1,4 @@
+opencv-python-headless
+numpy
+boto3
+awsiotsdk

@@ -4,12 +4,12 @@ import time
 import json
 import random
 import threading
-import cv2
-import boto3
 import platform
+import cv2
+import numpy as np
+import boto3
 from awscrt import mqtt
 from awsiot import mqtt_connection_builder
-
 
 # ==============================================================================
 # --- 1. GLOBAL INTEGRATED CONFIGURATION ---------------------------------------
@@ -29,6 +29,17 @@ FRAME_WIDTH = 640
 FRAME_HEIGHT = 480
 FPS = 30
 TARGET_INDEX = 1  # 0 = Integrated Camera, 1/2 = External USB Webcams
+
+# Container / Headless / Batch-Run Parameters
+# HEADLESS         - skip cv2.imshow/waitKey GUI rendering (required when there's no display, e.g. ECS Fargate)
+# VIDEO_SOURCE     - "camera" (real webcam, default/local behaviour), "synthetic" (procedurally
+#                    generated frames, no hardware/file needed), or a filesystem path to a video
+#                    file to loop continuously (stand-in footage for unattended runs)
+# RUN_DURATION_SECONDS - wall-clock time after which the whole agent self-terminates cleanly
+#                    (default 8 hours, matching the daily batch-job window)
+HEADLESS = os.environ.get("HEADLESS", "false").strip().lower() == "true"
+VIDEO_SOURCE = os.environ.get("VIDEO_SOURCE", "camera")
+RUN_DURATION_SECONDS = int(os.environ.get("RUN_DURATION_SECONDS", 8 * 60 * 60))
 
 # Local Security Credential Paths (Windows Format)
 CLAIM_CERT = "claim.cert.pem"
@@ -178,7 +189,7 @@ def telemetry_thread_worker():
                 payload = {
                     "sensor_id": i,
                     "timestamp": int(time.time()),
-                    "temperature": round(random.uniform(22.0, 30.0), 2),
+                    "temp": round(random.uniform(20.0, 50.0), 2),
                     "status": "online"
                 }
                 print(f"[SEND] {topic} -> data: {payload}")
@@ -187,7 +198,8 @@ def telemetry_thread_worker():
                     payload=json.dumps(payload), 
                     qos=mqtt.QoS.AT_LEAST_ONCE
                 )
-            
+               
+                
             # Subdivided sleep intervals allow fast exit checks on shutdown
             for _ in range(30):
                 if not system_running:
@@ -201,52 +213,102 @@ def telemetry_thread_worker():
 # ==============================================================================
 # --- THREAD B: MEDIA ROUTINE (AWS S3 VIDEO STREAM) ----------------------------
 # ==============================================================================
+def get_camera_backend():
+    """
+    Picks the OpenCV capture backend appropriate for the host OS.
+    Windows -> DirectShow, macOS -> AVFoundation, anything else -> let
+    OpenCV auto-select (CAP_ANY), which typically resolves to V4L2 on Linux.
+    """
+    os_name = platform.system()
+    if os_name == "Windows":
+        return cv2.CAP_DSHOW, "DirectShow"
+    elif os_name == "Darwin":
+        return cv2.CAP_AVFOUNDATION, "AVFoundation"
+    else:
+        return cv2.CAP_ANY, "Auto"
+
+
+def _generate_synthetic_frame(elapsed_seconds):
+    """
+    Draws a simple animated frame with no camera or video file involved.
+    Used for unattended/container runs (e.g. ECS Fargate) where there's no
+    physical webcam to capture from. Keeps the rest of the chunk/upload
+    pipeline fully exercised without needing any bundled media asset.
+    """
+    frame = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=np.uint8)
+    cx = int(FRAME_WIDTH / 2 + (FRAME_WIDTH / 3) * np.sin(elapsed_seconds))
+    cy = int(FRAME_HEIGHT / 2 + (FRAME_HEIGHT / 3) * np.cos(elapsed_seconds * 0.7))
+    cv2.circle(frame, (cx, cy), 30, (0, 200, 255), -1)
+    cv2.putText(frame, "SYNTHETIC FEED - MiniPC Simulator", (20, 30),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+    cv2.putText(frame, time.strftime("%Y-%m-%d %H:%M:%S"), (20, FRAME_HEIGHT - 20),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+    return frame
+
+
 def video_thread_worker():
     """Captures camera hardware blocks, saves to disk, and pushes segments to S3."""
-    global latest_shared_frame, system_running
+    global latest_shared_frame
     print(f"[VIDEO] Initializing S3 Client Engine for region: {AWS_REGION}...")
     s3_client = boto3.client('s3', region_name=AWS_REGION)
-    
-print(f"[VIDEO] Powering on webcam hardware at Index [{TARGET_INDEX}]...")
 
-if platform.system() == "Windows":
-    cap = cv2.VideoCapture(TARGET_INDEX, cv2.CAP_DSHOW)
-    if not cap.isOpened():
-        cap = cv2.VideoCapture(-1, cv2.CAP_DSHOW)
-else:
-    cap = cv2.VideoCapture(TARGET_INDEX)
-    if not cap.isOpened():
-        cap = cv2.VideoCapture(0)
-
-if not cap.isOpened():
-    print("❌ [VIDEO CRITICAL] OS blocked hardware camera access.")
-    system_running = False
-
-
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
-    cap.set(cv2.CAP_PROP_FPS, FPS)
+    cap = None
+    if VIDEO_SOURCE == "synthetic":
+        print("[VIDEO] VIDEO_SOURCE=synthetic - generating procedural frames, no camera or file needed.")
+    elif VIDEO_SOURCE == "camera":
+        camera_backend, backend_label = get_camera_backend()
+        print(f"[VIDEO] Powering on webcam hardware at Index [{TARGET_INDEX}] via {backend_label} ({platform.system()})...")
+        cap = cv2.VideoCapture(TARGET_INDEX, camera_backend)
+        if not cap.isOpened():
+            cap = cv2.VideoCapture(-1, camera_backend)
+        if not cap.isOpened():
+            print(f"⚠️ [VIDEO] No camera detected on {platform.system()} — skipping video capture. Telemetry will continue without it.")
+            return
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
+        cap.set(cv2.CAP_PROP_FPS, FPS)
+    else:
+        print(f"[VIDEO] VIDEO_SOURCE='{VIDEO_SOURCE}' - looping this file as a stand-in feed.")
+        cap = cv2.VideoCapture(VIDEO_SOURCE)
+        if not cap.isOpened():
+            print(f"⚠️ [VIDEO] Could not open source file '{VIDEO_SOURCE}' — skipping video capture.")
+            return
 
     temp_local_file = f"temp_output{FILE_EXTENSION}"
     chunk_start_time = time.time()
     chunk_counter = 1
-    
+    stream_start_time = time.time()
+    frame_interval = 1.0 / FPS
+
     video_writer = cv2.VideoWriter(temp_local_file, FOURCC_CODEC, FPS, (FRAME_WIDTH, FRAME_HEIGHT))
     print(f"[VIDEO] Media stream engine compiling {FILE_EXTENSION} file blocks every {CHUNK_DURATION_SEC}s.")
 
     try:
         while system_running:
-            ret, frame = cap.read()
+            if VIDEO_SOURCE == "synthetic":
+                frame = _generate_synthetic_frame(time.time() - stream_start_time)
+                ret = True
+                time.sleep(frame_interval)  # no hardware/file to naturally pace reads, so throttle to FPS
+            elif VIDEO_SOURCE == "camera":
+                ret, frame = cap.read()
+            else:
+                ret, frame = cap.read()
+                if not ret:
+                    # Reached end of the looping stand-in file - rewind and keep going
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    ret, frame = cap.read()
+                time.sleep(frame_interval)
+
             if not ret:
                 time.sleep(0.01)
                 continue
-                
+
             # Safely pass the frame to the main thread for rendering
             with frame_lock:
                 latest_shared_frame = frame.copy()
-                
+
             video_writer.write(frame)
-            
+
             current_time = time.time()
             if current_time - chunk_start_time >= CHUNK_DURATION_SEC:
                 video_writer.release()
@@ -279,7 +341,8 @@ if not cap.isOpened():
         print(f"[VIDEO CRITICAL ERROR]: {e}")
     finally:
         video_writer.release()
-        cap.release()
+        if cap is not None:
+            cap.release()
         if os.path.exists(temp_local_file):
             try:
                 os.remove(temp_local_file)
@@ -292,8 +355,8 @@ if not cap.isOpened():
 # ==============================================================================
 def main():
     global latest_shared_frame, system_running
-    print("====== STARTING WINDOWS 11 MULTI-THREADED IOT AGENT ======")
-    
+    print(f"====== STARTING MULTI-THREADED IOT AGENT ({platform.system()}, headless={HEADLESS}, video_source={VIDEO_SOURCE}) ======")
+
     # 1. Verification Phase for AWS Fleet Provisioning Onboarding 
     if not os.path.exists(PERM_CERT) or not os.path.exists(PERM_KEY):
         run_provisioning()
@@ -313,34 +376,50 @@ def main():
     t2_video.start()
 
     print("\n🚀 Standard Video Playback Pipeline Active!")
-    print("🛑 To exit, focus the video window and press 'q', or hit Ctrl+C in your terminal.\n")
+    if HEADLESS:
+        hours = RUN_DURATION_SECONDS / 3600
+        print(f"🛑 Headless mode: no GUI window. Will self-stop after {RUN_DURATION_SECONDS}s (~{hours:.1f}h), or on Ctrl+C / SIGTERM.\n")
+    else:
+        print("🛑 To exit, focus the video window and press 'q', or hit Ctrl+C in your terminal.\n")
 
-    # 3. Main Windows GUI Event Processing Thread Loop
+    # 3. Main Event Loop - renders a GUI window when one is available (HEADLESS=false),
+    #    otherwise just watches the clock so the whole agent self-terminates after
+    #    RUN_DURATION_SECONDS (e.g. an 8-hour daily batch window on ECS Fargate).
+    run_start_time = time.time()
     try:
         while system_running:
+            if time.time() - run_start_time >= RUN_DURATION_SECONDS:
+                print(f"\n[SHUTDOWN] Configured run duration of {RUN_DURATION_SECONDS}s reached.")
+                break
+
+            if HEADLESS:
+                time.sleep(1)
+                continue
+
             local_render_frame = None
-            
+
             with frame_lock:
                 if latest_shared_frame is not None:
                     local_render_frame = latest_shared_frame.copy()
-            
+
             if local_render_frame is not None:
                 cv2.imshow("Live S3 Playable Video Monitor", local_render_frame)
-            
+
             # Windows OS requires waitKey to process GUI painting event queues
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 print("\n[SHUTDOWN] Close requested via Monitor GUI window.")
                 break
-                
+
     except KeyboardInterrupt:
         print("\n[SHUTDOWN] Interrupted by user via terminal.")
-        
+
     # 4. Clean Shutdown Teardown Process
     print("[SHUTDOWN] Terminating system execution loops cleanly...")
     system_running = False
     time.sleep(1) # Give threads a brief window to complete loops
-    cv2.destroyAllWindows()
-    print("[STOPPED] Closed all active Windows data and video interfaces safely.")
+    if not HEADLESS:
+        cv2.destroyAllWindows()
+    print("[STOPPED] Closed all active data and video interfaces safely.")
 
 if __name__ == "__main__":
     main()
