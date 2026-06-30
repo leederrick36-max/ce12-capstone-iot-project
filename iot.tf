@@ -107,7 +107,7 @@ resource "aws_iot_provisioning_template" "fleet_template" {
   enabled               = true
 
   template_body = jsonencode({
-    Parameters = { SerialNumber = { Type = "String" }, DeviceModel = { Type = "String" } }
+    Parameters = { SerialNumber = { Type = "String" } }
     Resources = {
       thing = {
         Type = "AWS::IoT::Thing"

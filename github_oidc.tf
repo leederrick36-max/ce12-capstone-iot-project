@@ -7,7 +7,9 @@
 #
 # BOOTSTRAP ORDER (chicken-and-egg, read before touching the workflow file):
 #   1. Run `terraform apply` locally (as you already do) with this file in
-#      place. This creates the OIDC provider + role below.
+#      place. This reads the account's existing GitHub OIDC provider (it's
+#      account-wide, not per-project - someone on the team already created
+#      it) and creates the role below.
 #   2. `terraform output -raw github_actions_role_arn` and copy it into the
 #      GitHub repo secret AWS_OIDC_ROLE_ARN.
 #   3. Only then will .github/workflows/terraform.yml have something valid
@@ -19,14 +21,13 @@ variable "github_repo" {
   default     = "leederrick36-max/ce12-capstone-iot-project"
 }
 
-resource "aws_iam_openid_connect_provider" "github_actions" {
-  url            = "https://token.actions.githubusercontent.com"
-  client_id_list = ["sts.amazonaws.com"]
-
-  # AWS has validated GitHub's OIDC endpoint against its own trusted CA bundle
-  # since July 2023 and no longer actually checks this value - kept as a
-  # placeholder only because the resource still requires a non-empty list.
-  thumbprint_list = ["ffffffffffffffffffffffffffffffffffffffff"]
+# Account-wide singleton - IAM OIDC providers are keyed by URL per AWS
+# account, not per Terraform state. Someone on the team already created this
+# one, so we just read it instead of trying to (re)create it - avoids a
+# CreateOpenIDConnectProvider 409 and avoids fighting over ownership of a
+# resource other repos/teammates' Terraform may also reference.
+data "aws_iam_openid_connect_provider" "github_actions" {
+  url = "https://token.actions.githubusercontent.com"
 }
 
 resource "aws_iam_role" "github_actions" {
@@ -36,7 +37,7 @@ resource "aws_iam_role" "github_actions" {
     Version = "2012-10-17"
     Statement = [{
       Effect    = "Allow"
-      Principal = { Federated = aws_iam_openid_connect_provider.github_actions.arn }
+      Principal = { Federated = data.aws_iam_openid_connect_provider.github_actions.arn }
       Action    = "sts:AssumeRoleWithWebIdentity"
       Condition = {
         StringEquals = {
